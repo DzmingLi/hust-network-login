@@ -1,5 +1,6 @@
 mod encrypt;
 use std::fs;
+use std::net::{IpAddr, ToSocketAddrs};
 use std::time::Duration;
 use std::{io, thread};
 
@@ -14,8 +15,21 @@ fn extract<'a>(text: &'a str, prefix: &'a str, suffix: &'a str) -> io::Result<&'
     Err(io::ErrorKind::InvalidData.into())
 }
 
+// minreq has no happy-eyeballs and locks onto the first address from
+// getaddrinfo. Pin to IPv4 so we don't stall retrying an unroutable
+// IPv6 path, which is common on captive-portal Wi-Fi before auth.
+fn resolve_v4(host: &str) -> io::Result<IpAddr> {
+    (host, 80)
+        .to_socket_addrs()?
+        .find(|a| a.is_ipv4())
+        .map(|a| a.ip())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::AddrNotAvailable, "no IPv4 for host"))
+}
+
 fn login(username: &str, password: &str) -> io::Result<()> {
-    let resp = minreq::get("http://www.baidu.com")
+    let baidu_ip = resolve_v4("www.baidu.com")?;
+    let resp = minreq::get(format!("http://{}/", baidu_ip))
+        .with_header("Host", "www.baidu.com")
         .with_timeout(10)
         .send()
         .map_err(|e| {
